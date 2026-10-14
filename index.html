@@ -22,6 +22,18 @@
   #flip { position:absolute; right:10px; top:10px; border:0; border-radius:999px; width:38px; height:38px; background:rgba(0,0,0,.5); color:#fff; font-size:18px; }
   #msg { margin:14px 0 0; padding:12px 14px; border-radius:14px; background:var(--panel); min-height:48px; line-height:1.35; font-size:15px; }
   #msg.ok { border-left:5px solid var(--ok); } #msg.warn { border-left:5px solid var(--warn); } #msg.bad { border-left:5px solid var(--bad); }
+  .modes { display:flex; gap:8px; margin:12px 0 0; }
+  .modes button { flex:1; padding:11px 8px; border-radius:12px; border:1px solid #2c4a3a; background:transparent; color:var(--muted); font-size:15px; font-weight:600; }
+  .modes button.on { background:var(--panel); color:var(--ink); border-color:var(--accent); }
+  #prayers { display:none; flex-wrap:wrap; gap:6px; margin:10px 0 0; }
+  #prayers button { flex:1 1 0; min-width:58px; padding:10px 4px; border-radius:10px; border:1px solid #2c4a3a; background:transparent; color:var(--ink); font-size:14px; }
+  #prayers button.sel { background:var(--accent); color:#1b1606; border-color:var(--accent); font-weight:700; }
+  #prayers button.done { color:var(--ok); border-color:var(--ok); }
+  #detail { display:none; flex-wrap:wrap; gap:6px; margin:6px 0 0; }
+  #detail button { flex:1 1 0; padding:7px 4px; border-radius:10px; border:1px solid #2c4a3a; background:transparent; color:var(--muted); font-size:12.5px; }
+  #detail button.sel { border-color:var(--accent); color:var(--ink); background:var(--panel); }
+  #caption { display:none; width:100%; margin:10px 0 0; padding:12px; border-radius:12px; border:1px solid #2c4a3a; background:var(--panel); color:var(--ink); font-size:15px; font-family:inherit; resize:none; }
+  #hint { margin:8px 2px 0; font-size:12.5px; color:var(--muted); min-height:16px; }
   #shot { margin:14px 0 6px; padding:18px; border:0; border-radius:16px; font-size:18px; font-weight:700; background:var(--accent); color:#1b1606; }
   #shot:disabled { opacity:.55; }
   #retry { display:none; margin:0 0 8px; padding:12px; border-radius:12px; border:1px solid var(--muted); background:transparent; color:var(--ink); font-size:15px; }
@@ -37,6 +49,15 @@
     <button id="flip" title="Flip camera" aria-label="Flip camera">⟲</button>
     <div class="chip" id="gps">GPS: starting…</div>
   </div>
+  <div class="modes" role="group" aria-label="Photo type">
+    <button id="m-normal" class="on" type="button">📍 Normal</button>
+    <button id="m-prayer" type="button">🕌 Prayer</button>
+    <button id="m-note" type="button">📝 Note</button>
+  </div>
+  <div id="prayers"></div>
+  <div id="detail"></div>
+  <textarea id="caption" rows="2" maxlength="300" placeholder="Write a caption for this photo…"></textarea>
+  <div id="hint"></div>
   <div id="msg">Point the camera at where you are, then tap the button.</div>
   <button id="shot" disabled>📸 Send proof</button>
   <button id="retry">↻ Try sending again</button>
@@ -49,7 +70,53 @@
 (() => {
   const $ = id => document.getElementById(id);
   const cam = $('cam'), shot = $('shot'), retry = $('retry');
-  let stream = null, facing = 'environment', lastFix = null, pending = null;
+  let stream = null, facing = 'environment', lastFix = null, pending = null, mode = 'normal', prayer = null, detail = '';
+  const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+  const DETAILS = ['On time', "In jama'ah", 'Qaza (late)', 'Travelling'];
+
+  function today() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function doneToday() {
+    try { const o = JSON.parse(localStorage.getItem('prayersDone') || '{}'); return o.date === today() ? o.list : []; } catch (e) { return []; }
+  }
+  function markDone(name) {
+    try { const l = doneToday(); if (l.indexOf(name) < 0) l.push(name); localStorage.setItem('prayersDone', JSON.stringify({ date: today(), list: l })); } catch (e) {}
+  }
+  function drawChips() {
+    const done = doneToday();
+    $('prayers').innerHTML = '';
+    PRAYERS.forEach(n => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = (done.indexOf(n) >= 0 ? '✓ ' : '') + n;
+      b.className = (prayer === n ? 'sel ' : '') + (done.indexOf(n) >= 0 ? 'done' : '');
+      b.onclick = () => { prayer = n; drawChips(); };
+      $('prayers').appendChild(b);
+    });
+  }
+  function drawDetail() {
+    $('detail').innerHTML = '';
+    DETAILS.forEach(n => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = n; b.className = detail === n ? 'sel' : '';
+      b.onclick = () => { detail = detail === n ? '' : n; drawDetail(); };   // tap again to clear (optional)
+      $('detail').appendChild(b);
+    });
+  }
+  function setMode(m) {
+    mode = m;
+    $('m-normal').className = m === 'normal' ? 'on' : '';
+    $('m-prayer').className = m === 'prayer' ? 'on' : '';
+    $('m-note').className = m === 'note' ? 'on' : '';
+    $('prayers').style.display = m === 'prayer' ? 'flex' : 'none';
+    $('detail').style.display = m === 'prayer' ? 'flex' : 'none';
+    $('caption').style.display = m === 'note' ? 'block' : 'none';
+    $('hint').textContent = m === 'prayer' ? 'Choose the prayer (and optionally how), then photograph only the prayer mat or masjid carpet, not yourself.'
+      : m === 'note' ? 'A note is an extra photo with a caption for Muna. It does not count as proof for any task or prayer.' : '';
+    shot.textContent = m === 'prayer' ? '🕌 Send prayer photo' : m === 'note' ? '📝 Send note' : '📸 Send proof';
+    if (m === 'prayer') { drawChips(); drawDetail(); }
+  }
+  $('m-normal').onclick = () => setMode('normal');
+  $('m-prayer').onclick = () => setMode('prayer');
+  $('m-note').onclick = () => setMode('note');
 
   function show(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
   function pad(n) { return String(n).padStart(2, '0'); }
@@ -102,6 +169,8 @@
     if (!CONFIG || !CONFIG.ENDPOINT || CONFIG.ENDPOINT.indexOf('PASTE') >= 0) {
       show('App is not configured yet. Muna: put the Web app URL and token into config.js.', 'bad'); return;
     }
+    if (mode === 'prayer' && !prayer) { show('Choose which prayer this is first (Fajr, Dhuhr, Asr, Maghrib or Isha).', 'warn'); return; }
+    if (mode === 'note' && !$('caption').value.trim()) { show('Write a caption first, then tap the button.', 'warn'); $('caption').focus(); return; }
     shot.disabled = true; retry.style.display = 'none';
     const t0 = performance.now();
 
@@ -131,7 +200,8 @@
     pending = {
       t0,
       payload: {
-        token: CONFIG.TOKEN,
+        token: CONFIG.TOKEN, kind: mode, prayer: mode === 'prayer' ? prayer : '', detail: mode === 'prayer' ? detail : '',
+        caption: mode === 'note' ? $('caption').value.trim() : '',
         photo: c.toDataURL('image/jpeg', 0.65),
         lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy,
         fixAgeSec: Math.max(0, (Date.now() - pos.timestamp) / 1000)
@@ -161,7 +231,267 @@
   }
 
   function report(o) {
-    const cls = o.status === 'OK' || o.status === 'NO TASK NOW' ? 'ok' : (o.status === 'FAR' ? 'bad' : 'warn');
+    const cls = ['OK', 'NO TASK NOW', 'PRAYER', 'NOTE'].indexOf(o.status) >= 0 ? 'ok' : (o.status === 'FAR' ? 'bad' : 'warn');
+    if (o.status === 'PRAYER' || (o.status === 'STALE' && mode === 'prayer')) { if (prayer) markDone(prayer); prayer = null; detail = ''; if (mode === 'prayer') { drawChips(); drawDetail(); } }
+    if (o.status === 'NOTE') $('caption').value = '';
+    show(o.msg || ('Saved at ' + o.time + ' (' + o.status + ')'), cls);
+    try {
+      const h = JSON.parse(localStorage.getItem('hist') || '[]');
+      h.unshift(o.time + '  ' + o.status + (o.matched ? ' · ' + o.matched : ''));
+      localStorage.setItem('hist', JSON.stringify(h.slice(0, 5)));
+    } catch (e) {}
+    drawHistory();
+  }
+  function drawHistory() {
+    let h = [];
+    try { h = JSON.parse(localStorage.getItem('hist') || '[]'); } catch (e) {}
+    $('history').innerHTML = h.map(x => '<li>' + x.replace(/</g, '&lt;') + '</li>').join('');
+  }
+
+  shot.onclick = capture;
+  retry.onclick = () => { if (pending) send(); };
+  drawHistory(); startCam(); startGps();
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+})();
+</script>
+</body>
+</html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1f17">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<title>Muhasaba</title>
+<style>
+  :root { --bg:#0f1f17; --card:#18302300; --panel:#183023; --ink:#f3efe3; --muted:#9db3a5; --ok:#5fd38d; --warn:#f2c14e; --bad:#ef6a5b; --accent:#d9b44a; }
+  * { box-sizing:border-box; }
+  html,body { height:100%; margin:0; background:var(--bg); color:var(--ink); font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+  body { display:flex; flex-direction:column; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); max-width:560px; margin:0 auto; }
+  header { display:flex; justify-content:space-between; align-items:baseline; padding:14px 0 8px; }
+  h1 { font-size:20px; margin:0; letter-spacing:.5px; }
+  h1 small { color:var(--muted); font-weight:400; font-size:12px; margin-left:6px; }
+  #clock { color:var(--muted); font-variant-numeric:tabular-nums; font-size:14px; }
+  .frame { position:relative; border-radius:18px; overflow:hidden; background:#000; aspect-ratio:3/4; max-height:56vh; width:100%; }
+  video { width:100%; height:100%; object-fit:cover; display:block; }
+  .chip { position:absolute; left:10px; bottom:10px; padding:6px 10px; border-radius:999px; font-size:12px; background:rgba(0,0,0,.55); backdrop-filter:blur(4px); }
+  #flip { position:absolute; right:10px; top:10px; border:0; border-radius:999px; width:38px; height:38px; background:rgba(0,0,0,.5); color:#fff; font-size:18px; }
+  #msg { margin:14px 0 0; padding:12px 14px; border-radius:14px; background:var(--panel); min-height:48px; line-height:1.35; font-size:15px; }
+  #msg.ok { border-left:5px solid var(--ok); } #msg.warn { border-left:5px solid var(--warn); } #msg.bad { border-left:5px solid var(--bad); }
+  .modes { display:flex; gap:8px; margin:12px 0 0; }
+  .modes button { flex:1; padding:11px 8px; border-radius:12px; border:1px solid #2c4a3a; background:transparent; color:var(--muted); font-size:15px; font-weight:600; }
+  .modes button.on { background:var(--panel); color:var(--ink); border-color:var(--accent); }
+  #prayers { display:none; flex-wrap:wrap; gap:6px; margin:10px 0 0; }
+  #prayers button { flex:1 1 0; min-width:58px; padding:10px 4px; border-radius:10px; border:1px solid #2c4a3a; background:transparent; color:var(--ink); font-size:14px; }
+  #prayers button.sel { background:var(--accent); color:#1b1606; border-color:var(--accent); font-weight:700; }
+  #prayers button.done { color:var(--ok); border-color:var(--ok); }
+  #detail { display:none; flex-wrap:wrap; gap:6px; margin:6px 0 0; }
+  #detail button { flex:1 1 0; padding:7px 4px; border-radius:10px; border:1px solid #2c4a3a; background:transparent; color:var(--muted); font-size:12.5px; }
+  #detail button.sel { border-color:var(--accent); color:var(--ink); background:var(--panel); }
+  #caption { display:none; width:100%; margin:10px 0 0; padding:12px; border-radius:12px; border:1px solid #2c4a3a; background:var(--panel); color:var(--ink); font-size:15px; font-family:inherit; resize:none; }
+  #hint { margin:8px 2px 0; font-size:12.5px; color:var(--muted); min-height:16px; }
+  #shot { margin:14px 0 6px; padding:18px; border:0; border-radius:16px; font-size:18px; font-weight:700; background:var(--accent); color:#1b1606; }
+  #shot:disabled { opacity:.55; }
+  #retry { display:none; margin:0 0 8px; padding:12px; border-radius:12px; border:1px solid var(--muted); background:transparent; color:var(--ink); font-size:15px; }
+  ul { list-style:none; margin:8px 0 12px; padding:0; color:var(--muted); font-size:13px; }
+  li { padding:3px 0; }
+  footer { margin-top:auto; padding:6px 0 10px; text-align:center; color:var(--muted); font-size:12px; }
+</style>
+</head>
+<body>
+  <header><h1>Muhasaba <small>self-accounting</small></h1><span id="clock"></span></header>
+  <div class="frame">
+    <video id="cam" autoplay playsinline muted></video>
+    <button id="flip" title="Flip camera" aria-label="Flip camera">⟲</button>
+    <div class="chip" id="gps">GPS: starting…</div>
+  </div>
+  <div class="modes" role="group" aria-label="Photo type">
+    <button id="m-normal" class="on" type="button">📍 Normal</button>
+    <button id="m-prayer" type="button">🕌 Prayer</button>
+    <button id="m-note" type="button">📝 Note</button>
+  </div>
+  <div id="prayers"></div>
+  <div id="detail"></div>
+  <textarea id="caption" rows="2" maxlength="300" placeholder="Write a caption for this photo…"></textarea>
+  <div id="hint"></div>
+  <div id="msg">Point the camera at where you are, then tap the button.</div>
+  <button id="shot" disabled>📸 Send proof</button>
+  <button id="retry">↻ Try sending again</button>
+  <ul id="history"></ul>
+  <footer>Be honest with yourself: Allah sees. Photos are only seen by Muna.</footer>
+<canvas id="canvas" hidden></canvas>
+
+<script src="config.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const cam = $('cam'), shot = $('shot'), retry = $('retry');
+  let stream = null, facing = 'environment', lastFix = null, pending = null, mode = 'normal', prayer = null, detail = '';
+  const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+  const DETAILS = ['On time', "In jama'ah", 'Qaza (late)', 'Travelling'];
+
+  function today() { const d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+  function doneToday() {
+    try { const o = JSON.parse(localStorage.getItem('prayersDone') || '{}'); return o.date === today() ? o.list : []; } catch (e) { return []; }
+  }
+  function markDone(name) {
+    try { const l = doneToday(); if (l.indexOf(name) < 0) l.push(name); localStorage.setItem('prayersDone', JSON.stringify({ date: today(), list: l })); } catch (e) {}
+  }
+  function drawChips() {
+    const done = doneToday();
+    $('prayers').innerHTML = '';
+    PRAYERS.forEach(n => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = (done.indexOf(n) >= 0 ? '✓ ' : '') + n;
+      b.className = (prayer === n ? 'sel ' : '') + (done.indexOf(n) >= 0 ? 'done' : '');
+      b.onclick = () => { prayer = n; drawChips(); };
+      $('prayers').appendChild(b);
+    });
+  }
+  function drawDetail() {
+    $('detail').innerHTML = '';
+    DETAILS.forEach(n => {
+      const b = document.createElement('button');
+      b.type = 'button'; b.textContent = n; b.className = detail === n ? 'sel' : '';
+      b.onclick = () => { detail = detail === n ? '' : n; drawDetail(); };   // tap again to clear (optional)
+      $('detail').appendChild(b);
+    });
+  }
+  function setMode(m) {
+    mode = m;
+    $('m-normal').className = m === 'normal' ? 'on' : '';
+    $('m-prayer').className = m === 'prayer' ? 'on' : '';
+    $('m-note').className = m === 'note' ? 'on' : '';
+    $('prayers').style.display = m === 'prayer' ? 'flex' : 'none';
+    $('detail').style.display = m === 'prayer' ? 'flex' : 'none';
+    $('caption').style.display = m === 'note' ? 'block' : 'none';
+    $('hint').textContent = m === 'prayer' ? 'Choose the prayer (and optionally how), then photograph only the prayer mat or masjid carpet, not yourself.'
+      : m === 'note' ? 'A note is an extra photo with a caption for Muna. It does not count as proof for any task or prayer.' : '';
+    shot.textContent = m === 'prayer' ? '🕌 Send prayer photo' : m === 'note' ? '📝 Send note' : '📸 Send proof';
+    if (m === 'prayer') { drawChips(); drawDetail(); }
+  }
+  $('m-normal').onclick = () => setMode('normal');
+  $('m-prayer').onclick = () => setMode('prayer');
+  $('m-note').onclick = () => setMode('note');
+
+  function show(text, cls) { const m = $('msg'); m.textContent = text; m.className = cls || ''; }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function tick() { const d = new Date(); $('clock').textContent = pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  setInterval(tick, 10000); tick();
+
+  /* ---------- camera (live stream only: no gallery picker) ---------- */
+  async function startCam() {
+    try {
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 960 } }, audio: false
+      });
+      cam.srcObject = stream;
+      shot.disabled = false;
+    } catch (e) {
+      shot.disabled = true;
+      show('Camera is blocked. In Chrome: ⋮ → Settings → Site settings → Camera → allow this site.', 'bad');
+    }
+  }
+  $('flip').onclick = () => { facing = facing === 'environment' ? 'user' : 'environment'; startCam(); };
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && (!stream || stream.getVideoTracks().every(t => t.readyState === 'ended'))) startCam();
+  });
+
+  /* ---------- GPS (kept warm while the app is open) ---------- */
+  function gpsLabel() {
+    if (!lastFix) return 'GPS: waiting…';
+    const age = Math.round((Date.now() - lastFix.timestamp) / 1000);
+    return 'GPS ±' + Math.round(lastFix.coords.accuracy) + ' m · ' + age + ' s ago';
+  }
+  function startGps() {
+    if (!navigator.geolocation) { $('gps').textContent = 'GPS not supported'; return; }
+    navigator.geolocation.watchPosition(
+      p => { lastFix = p; $('gps').textContent = gpsLabel(); },
+      e => { $('gps').textContent = e.code === 1 ? 'GPS blocked: allow Location for this site' : 'GPS: searching…'; },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 30000 }
+    );
+    setInterval(() => { if (lastFix) $('gps').textContent = gpsLabel(); }, 3000);
+  }
+  function freshFix() {
+    return new Promise((resolve, reject) =>
+      navigator.geolocation.getCurrentPosition(resolve, reject,
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 25000 }));
+  }
+
+  /* ---------- capture + send ---------- */
+  async function capture() {
+    if (!cam.videoWidth) { show('Camera is not ready yet.', 'warn'); return; }
+    if (!CONFIG || !CONFIG.ENDPOINT || CONFIG.ENDPOINT.indexOf('PASTE') >= 0) {
+      show('App is not configured yet. Muna: put the Web app URL and token into config.js.', 'bad'); return;
+    }
+    if (mode === 'prayer' && !prayer) { show('Choose which prayer this is first (Fajr, Dhuhr, Asr, Maghrib or Isha).', 'warn'); return; }
+    if (mode === 'note' && !$('caption').value.trim()) { show('Write a caption first, then tap the button.', 'warn'); $('caption').focus(); return; }
+    shot.disabled = true; retry.style.display = 'none';
+    const t0 = performance.now();
+
+    // freeze the frame immediately
+    const c = $('canvas'), W = cam.videoWidth, H = cam.videoHeight, k = Math.min(1, 1024 / Math.max(W, H));
+    c.width = Math.round(W * k); c.height = Math.round(H * k);
+    const ctx = c.getContext('2d'); ctx.drawImage(cam, 0, 0, c.width, c.height);
+
+    show('Getting a fresh GPS fix…');
+    let pos = lastFix;
+    try {
+      if (!pos || Date.now() - pos.timestamp > 15000) pos = await freshFix();
+    } catch (e) {
+      show('Could not get GPS. Go outside/near a window, make sure Location is on, then try again.', 'bad');
+      shot.disabled = false; return;
+    }
+
+    // burn a readable stamp into the photo (for Muna's eyes; the server stamps the real time)
+    const d = new Date();
+    const stamp = pad(d.getDate()) + '.' + pad(d.getMonth() + 1) + '.' + d.getFullYear() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds()) +
+      '  ' + pos.coords.latitude.toFixed(5) + ', ' + pos.coords.longitude.toFixed(5) + '  ±' + Math.round(pos.coords.accuracy) + 'm';
+    const bar = Math.max(22, Math.round(c.height * 0.05));
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0, c.height - bar, c.width, bar);
+    ctx.fillStyle = '#fff'; ctx.font = Math.round(bar * 0.55) + 'px monospace'; ctx.textBaseline = 'middle';
+    ctx.fillText(stamp, 8, c.height - bar / 2);
+
+    pending = {
+      t0,
+      payload: {
+        token: CONFIG.TOKEN, kind: mode, prayer: mode === 'prayer' ? prayer : '', detail: mode === 'prayer' ? detail : '',
+        caption: mode === 'note' ? $('caption').value.trim() : '',
+        photo: c.toDataURL('image/jpeg', 0.65),
+        lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: pos.coords.accuracy,
+        fixAgeSec: Math.max(0, (Date.now() - pos.timestamp) / 1000)
+      }
+    };
+    await send();
+  }
+
+  async function send() {
+    show('Sending…');
+    pending.payload.delaySec = (performance.now() - pending.t0) / 1000;
+    try {
+      const res = await fetch(CONFIG.ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // text/plain avoids a CORS preflight
+        body: JSON.stringify(pending.payload)
+      });
+      const out = await res.json();
+      if (!out.ok) throw new Error(out.error || 'Server said no');
+      pending = null;
+      report(out);
+    } catch (e) {
+      show('Not sent (' + (e.message || e) + '). Check your internet and tap "Try sending again".', 'bad');
+      retry.style.display = 'block';
+    }
+    shot.disabled = false;
+  }
+
+  function report(o) {
+    const cls = ['OK', 'NO TASK NOW', 'PRAYER', 'NOTE'].indexOf(o.status) >= 0 ? 'ok' : (o.status === 'FAR' ? 'bad' : 'warn');
+    if (o.status === 'PRAYER' || (o.status === 'STALE' && mode === 'prayer')) { if (prayer) markDone(prayer); prayer = null; detail = ''; if (mode === 'prayer') { drawChips(); drawDetail(); } }
+    if (o.status === 'NOTE') $('caption').value = '';
     show(o.msg || ('Saved at ' + o.time + ' (' + o.status + ')'), cls);
     try {
       const h = JSON.parse(localStorage.getItem('hist') || '[]');
